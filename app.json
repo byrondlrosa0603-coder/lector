@@ -2,6 +2,7 @@
   "expo": {
     "name": "lector",
     "slug": "lector",
+    "scheme": "lector",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,6 +20,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      ["expo-secure-store", { "faceIDPermission": "Permite que Lector proteja tu sesión con la biometría del dispositivo." }],
+      ["expo-local-authentication", { "faceIDPermission": "Permite que Lector desbloquee tu sesión con la biometría del dispositivo." }],
+      "expo-router"
+    ]
   }
 }
