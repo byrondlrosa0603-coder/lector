@@ -9,25 +9,27 @@ guarda en SecureStore/localStorage y se restaura mientras el servidor lo acepte
 (hasta 7 días). Al dejarla desmarcada se eliminan sesiones guardadas anteriores y
 en móvil el nuevo token existe únicamente en la memoria del proveedor de sesión.
 En web, ambos modos comparten un registro en localStorage entre pestañas del
-mismo origen/navegador. Sin marcar la casilla, el registro tiene un plazo local
-FIJO de 30 minutos desde el login; recargar, validar o abrir otra pestaña no lo
-renueva. Al marcarla no hay ese plazo adicional: se aplica el vencimiento de
-Supabase de hasta 7 días. El plazo web se controla con el reloj del cliente;
-no cambia ni acorta la validez del token en el servidor.
+mismo origen y navegador. Con la casilla desmarcada, la sesión web vence tras
+5 minutos de inactividad. Pulsar, escribir o desplazarse en cualquier pestaña
+visible de la app renueva el plazo para todas. Recargar, cambiar de pestaña y
+validar automáticamente conservan el plazo que ya estaba guardado.
+La casilla marcada conserva el acceso hasta el vencimiento de Supabase, de
+hasta 7 días. El plazo de inactividad se aplica con el reloj del navegador.
+La validez del token en Supabase sigue su propio vencimiento.
 Al cerrar la última pestaña el registro permanece hasta vencer o cerrar sesión.
 Los eventos storage y focus sincronizan cambios de cuenta y cierre de sesión.
 La app comprueba el token en almacenamiento antes de aceptar una validación
 pendiente, para evitar recuperar una cuenta que otra pestaña acaba de cerrar.
 Volver del segundo plano conserva una sesión móvil temporal si el proceso sigue
 vivo; terminar el proceso o reiniciar Expo requiere nuevas credenciales.
-Al vencer el plazo local, un temporizador retira el acceso de las pestañas
+Al vencer el plazo de inactividad, un temporizador retira el acceso de las pestañas
 abiertas. Al volver de una pestaña suspendida se comprueba también el plazo.
 Cerrar sesión o recibir 401 al validar elimina el token compartido. Los antiguos
 tokens persistentes se migran al formato compartido; los antiguos temporales de
 sessionStorage se descartan (ingresa una vez nuevamente para usar el nuevo modo).
 Perder el token local no revoca el registro remoto: vence con su plazo habitual.
 Cerrar sesión explícitamente sigue revocándolo y limpiando el almacenamiento.
-La huella solo se puede activar para sesiones persistentes; se comprueba tanto
+El desbloqueo de un token con huella se puede activar para sesiones persistentes; se comprueba tanto
 en la interfaz como en el proveedor. Las sesiones ya guardadas antes de este
 cambio siguen restaurándose; para pasar al modo temporal se debe iniciar sesión
 nuevamente con la casilla desmarcada. No se modifican SQL ni Edge Functions.
@@ -37,7 +39,7 @@ nuevamente con la casilla desmarcada. No se modifican SQL ni Edge Functions.
 Tras entrar con contraseña, Inicio ofrece «Activar desbloqueo con huella» si el
 celular tiene lector, huella registrada y soporte de SecureStore autenticado.
 La activación mueve el token a una clave con requireAuthentication y elimina
-la copia sin protección biométrica. No se guardan contraseñas ni huellas.
+la copia sin protección biométrica. Este modo protege el token de la sesión.
 Al iniciar/reanudar la app se bloquea el portal. Solo el botón «Desbloquear con
 huella» abre el diálogo nativo y después valida la sesión existente en Supabase.
 La restauración periódica no abre diálogos ni permite omitir el bloqueo.
@@ -54,6 +56,26 @@ Web conserva contraseña y sesión actuales. Algunas funciones biométricas de
 SecureStore no funcionan en Expo Go; usar compilación propia si se indica que
 no hay soporte. Nunca se degrada a guardar el token sin protección al activar.
 
+## Inicio de sesión con credenciales protegidas en Android
+
+Al entrar con contraseña, puedes marcar «Guardar credenciales para entrar con
+huella». Tras verificar el acceso, la app guarda un usuario y su contraseña en
+SecureStore con autenticación biométrica obligatoria. Se admite una cuenta por
+instalación. El indicador que se lee al abrir la app solo contiene el ID de la
+cuenta. El diálogo biométrico se abre al pulsar «Iniciar sesión con huella».
+
+Ese botón lee las credenciales protegidas y llama a `login-empleado` por HTTPS
+para crear una sesión nueva. Puedes elegir «Mantener sesión iniciada» en ambos
+métodos de acceso. La huella permanece en el teléfono. Cerrar sesión revoca el
+token y conserva las credenciales locales. «Eliminar credenciales guardadas»
+en Inicio o en el formulario permite borrarlas. Entrar con otra cuenta conserva
+la cuenta guardada. Si marcas la casilla de guardado para esa otra cuenta, un
+aviso te permite conservar las credenciales anteriores o reemplazarlas. Ambas
+decisiones permiten iniciar sesión con la cuenta que ingresaste.
+Ante un rechazo de credenciales, la app las elimina y solicita la contraseña
+actual. Los cambios en la biometría del teléfono también pueden requerir guardarlas
+de nuevo. La cancelación de la comprobación permite reintentar.
+
 Prueba pendiente en teléfono real: activar, mandar app a segundo plano, cancelar
 el diálogo, desbloquear, usar contraseña, desactivar y cerrar sesión. Cambios en
 las huellas registradas pueden invalidar la clave; se recupera con contraseña.
@@ -66,7 +88,9 @@ El formulario está en `src/screens/LoginScreen.jsx` y la sesión se comparte me
 SessionProvider. Tras iniciar o restaurar la sesión se abre `/inicio`.
 
 - Empleado: Inicio, Asistencia y Solicitudes.
-- Administrativo: Inicio, Empleados, Asistencia, Solicitudes y Servicios.
+- Administrativo: Inicio, Editar, Asistencia, Solicitudes y Servicios.
+
+Editar reúne los módulos previstos de Empleados, Horarios y Áreas.
 
 Inicio muestra nombre, rol, ID y correo reales de la sesión. Las otras secciones
 son espacios reservados para definir su contenido posteriormente; no consultan

@@ -1,18 +1,36 @@
 import { useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useSession } from '../use-session';
+import SessionLoading from '../components/SessionLoading';
+
+function confirmar_reemplazo_huella() {
+  return new Promise(resolve => {
+    Alert.alert(
+      '¿Reemplazar las credenciales guardadas?',
+      'Ya hay otra cuenta guardada para entrar con huella. Puedes conservarla y continuar con el inicio de sesión de la cuenta que ingresaste.',
+      [
+        { text: 'Conservar', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Reemplazar', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
+}
 
 export default function LoginScreen() {
   const [identificador, set_identificador] = useState('');
   const [password, set_password] = useState('');
   const [visible, set_visible] = useState(false);
   const [mantener, set_mantener] = useState(false);
+  const [guardar_huella, set_guardar_huella] = useState(false);
   const [focused, set_focused] = useState(null);
   const [loading, set_loading] = useState(false);
   const [error, set_error] = useState('');
-  const { empleado, checking, session_error, restaurar, entrar, bloqueada, biometria, desbloquear, usar_password } = useSession();
+  const { empleado, checking, session_error, restaurar, entrar, bloqueada, biometria, desbloquear, usar_password,
+    capacidad, acceso_huella, entrar_con_huella, quitar_acceso_huella } = useSession();
+  const es_android = Platform.OS === 'android';
   const password_ref = useRef(null);
   const pending = useRef(false);
 
@@ -27,7 +45,7 @@ export default function LoginScreen() {
     set_loading(true);
     set_error('');
     try {
-      await entrar(identificador, password, mantener);
+      await entrar(identificador, password, mantener, es_android && guardar_huella, confirmar_reemplazo_huella);
       set_password('');
       set_visible(false);
     } catch (failure) {
@@ -38,14 +56,16 @@ export default function LoginScreen() {
     }
   }
 
+  if (Platform.OS === 'web' && checking) return <SessionLoading />;
   if (empleado && !checking && !session_error) return <Redirect href="/inicio" />;
 
-  async function abrir_con_huella() {
+  async function gestionar_huella(accion) {
     if (pending.current) return;
+    Keyboard.dismiss();
     pending.current = true;
     set_loading(true);
     set_error('');
-    try { await desbloquear(); }
+    try { await accion(); }
     catch (failure) { set_error(failure.message || 'No se pudo desbloquear. Usa tu contraseña.'); }
     finally { pending.current = false; set_loading(false); }
   }
@@ -79,7 +99,7 @@ export default function LoginScreen() {
               <Text accessibilityRole="header" style={styles.title}>Te damos la bienvenida</Text>
               <Text style={styles.subtitle}>Ingresa para acceder a tu información.</Text>
               {bloqueada && biometria && Platform.OS !== 'web' ? <View style={styles.biometric}>
-                <Pressable accessibilityRole="button" disabled={loading} accessibilityState={{ disabled: loading, busy: loading }} onPress={abrir_con_huella} style={styles.biometricButton}>
+                <Pressable accessibilityRole="button" disabled={loading} accessibilityState={{ disabled: loading, busy: loading }} onPress={() => gestionar_huella(desbloquear)} style={styles.biometricButton}>
                   {loading ? <ActivityIndicator color="#2563eb" size="small" /> : null}
                   <Text style={styles.showText}>{loading ? 'Verificando…' : 'Desbloquear con huella'}</Text>
                 </Pressable>
@@ -115,7 +135,15 @@ export default function LoginScreen() {
                 <View style={[styles.checkbox, mantener && styles.checkboxChecked]}><Text style={styles.checkmark}>{mantener ? '✓' : ''}</Text></View>
                 <Text style={styles.rememberLabel}>Mantener sesión iniciada</Text>
               </Pressable>
-              <Text style={styles.rememberNote}>{mantener ? 'Conserva tu acceso hasta 7 días en este dispositivo.' : Platform.OS === 'web' ? 'Accede durante 30 minutos, incluso al recargar o abrir otra pestaña.' : 'Al cerrar por completo la app, deberás ingresar de nuevo.'}</Text>
+              <Text style={styles.rememberNote}>{mantener ? 'Conserva tu acceso hasta 7 días en este dispositivo.' : Platform.OS === 'web' ? 'La sesión se cierra tras 5 minutos sin actividad en ninguna pestaña.' : 'Al cerrar por completo la app, deberás ingresar de nuevo.'}</Text>
+              {es_android && capacidad.disponible ? <>
+                <Pressable accessibilityRole="checkbox" accessibilityLabel="Guardar credenciales para entrar con huella" accessibilityState={{ checked: guardar_huella, disabled: loading }} disabled={loading}
+                  onPress={() => set_guardar_huella(!guardar_huella)} style={styles.rememberRow}>
+                  <View style={[styles.checkbox, guardar_huella && styles.checkboxChecked]}><Text style={styles.checkmark}>{guardar_huella ? '✓' : ''}</Text></View>
+                  <Text style={styles.rememberLabel}>Guardar credenciales para entrar con huella</Text>
+                </Pressable>
+                <Text style={styles.rememberNote}>Guarda tu usuario y contraseña cifrados en este teléfono para iniciar una sesión nueva con huella.</Text>
+              </> : null}
               {error ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
               <Pressable accessibilityRole="button" accessibilityState={{ disabled: loading, busy: loading }} disabled={loading}
                 onPress={iniciar_sesion} style={({ pressed }) => [styles.button, pressed && styles.pressed, loading && styles.disabled]}>
@@ -123,6 +151,14 @@ export default function LoginScreen() {
                 <Text style={styles.buttonText}>{loading ? 'Iniciando sesión…' : 'Iniciar sesión'}</Text>
                 {!loading ? <Text style={styles.arrow}>→</Text> : null}
               </Pressable>
+              {es_android && acceso_huella ? <View style={styles.savedBiometric}>
+                {capacidad.disponible ? <Pressable accessibilityRole="button" disabled={loading} accessibilityState={{ disabled: loading, busy: loading }} onPress={() => gestionar_huella(() => entrar_con_huella(mantener))} style={styles.biometricButton}>
+                  <Text style={styles.showText}>Iniciar sesión con huella</Text>
+                </Pressable> : <Text style={styles.biometricNote}>{capacidad.motivo}</Text>}
+                <Pressable accessibilityRole="button" disabled={loading} onPress={() => gestionar_huella(quitar_acceso_huella)} style={styles.removeBiometric}>
+                  <Text style={styles.showText}>Eliminar credenciales guardadas</Text>
+                </Pressable>
+              </View> : null}
               <Text style={styles.help}>¿Necesitas acceso? Contacta a tu administrador.</Text>
             </>}
           </View>
@@ -141,6 +177,8 @@ const styles = StyleSheet.create({
   rememberLabel: { fontSize: 13, color: '#33435c', flexShrink: 1 },
   rememberNote: { fontSize: 11, lineHeight: 18, color: '#718096', marginBottom: 18, marginLeft: 32 },
   biometric: { marginBottom: 24 },
+  savedBiometric: { marginTop: 12 },
+  removeBiometric: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   biometricButton: { minHeight: 52, backgroundColor: '#edf3ff', borderColor: '#d7e4ff', borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10, padding: 12 },
   biometricNote: { fontSize: 12, lineHeight: 19, color: '#718096', marginTop: 12, textAlign: 'center' },
   page: { flex: 1, backgroundColor: '#f5f8ff' },

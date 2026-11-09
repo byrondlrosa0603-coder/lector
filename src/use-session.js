@@ -1,7 +1,8 @@
 import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { verificar_credenciales, validar_sesion, cerrar_sesion } from './services/login';
-import { leer_token, leer_persistencia, leer_expiracion, guardar_token, borrar_token, leer_biometria, capacidad_biometrica, activar_biometria, desactivar_biometria } from './services/session-storage';
+import { leer_token, leer_persistencia, leer_expiracion, renovar_actividad, plazo_actualizado, guardar_token, borrar_token, leer_biometria, capacidad_biometrica, activar_biometria, desactivar_biometria } from './services/session-storage';
+import { leer_cuenta_huella, leer_credenciales_huella, guardar_credenciales_huella, borrar_credenciales_huella } from './services/session-storage';
 
 const SessionContext = createContext(null);
 export function SessionProvider({ children }) {
@@ -18,6 +19,7 @@ function useSessionState() {
   const [checking, set_checking] = useState(true);
   const [session_error, set_session_error] = useState('');
   const [biometria, set_biometria] = useState(false);
+  const [acceso_huella, set_acceso_huella] = useState(false);
   const [persistente, set_persistente] = useState(false);
   const [bloqueada, set_bloqueada] = useState(false);
   const [capacidad, set_capacidad] = useState({ disponible: false, motivo: 'Comprobando compatibilidad…' });
@@ -29,6 +31,7 @@ function useSessionState() {
   const expiracion_timer = useRef(null);
   const revalidar = useRef(false);
   const es_web = Platform.OS === 'web';
+  const es_android = Platform.OS === 'android';
   const foreground = () => AppState.currentState == null || AppState.currentState === 'active';
 
   function bloquear() {
@@ -37,20 +40,31 @@ function useSessionState() {
     set_empleado(null);
     set_bloqueada(true);
   }
+  function sincronizar_web() {
+    revision.current += 1;
+    token_ref.current = null;
+    set_empleado(null);
+    set_checking(true);
+    if (busy.current) revalidar.current = true;
+    else restaurar();
+  }
+  function programar_expiracion(hasta) {
+    clearTimeout(expiracion_timer.current);
+    if (hasta != null) {
+      expiracion_timer.current = setTimeout(sincronizar_web, Math.max(0, hasta - Date.now()));
+    }
+  }
   async function aceptar(session) {
     if (enabled.current && !foreground()) { bloquear(); return; }
     if (es_web) {
       const version = revision.current;
       if (await leer_token() !== session.token) {
-        token_ref.current = null;
-        set_empleado(null);
-        revalidar.current = true;
+        sincronizar_web();
         return;
       }
-      clearTimeout(expiracion_timer.current);
       const hasta = await leer_expiracion();
       if (version !== revision.current) return;
-      if (hasta != null) expiracion_timer.current = setTimeout(restaurar, Math.max(0, hasta - Date.now()));
+      programar_expiracion(hasta);
     }
     token_ref.current = session.token;
     set_empleado(session.empleado);
@@ -75,6 +89,7 @@ function useSessionState() {
     let token_consultado = null;
     set_session_error('');
     try {
+      if (es_android) set_acceso_huella((await leer_cuenta_huella().catch(() => null)) != null);
       enabled.current = await leer_biometria();
       set_biometria(enabled.current);
       if (enabled.current) {
@@ -93,6 +108,11 @@ function useSessionState() {
         set_empleado(null);
         return;
       }
+      if (es_web && token !== token_ref.current) {
+        token_ref.current = null;
+        set_empleado(null);
+        set_checking(true);
+      }
       if (desde_storage) {
         mantener_ref.current = await leer_persistencia();
         set_persistente(mantener_ref.current);
@@ -106,7 +126,7 @@ function useSessionState() {
       set_empleado(null);
       if (error.status === 401) {
         if (es_web && await leer_token() !== token_consultado) {
-          revalidar.current = true;
+          sincronizar_web();
           return;
         }
         try { await limpiar(); }
@@ -114,8 +134,8 @@ function useSessionState() {
       } else set_session_error(error.message || 'No se pudo restaurar tu sesión.');
     } finally {
       busy.current = false;
-      set_checking(false);
       if (revalidar.current) { revalidar.current = false; queueMicrotask(restaurar); }
+      else set_checking(false);
     }
   }, []);
 
@@ -128,48 +148,120 @@ function useSessionState() {
     });
     const timer = setInterval(() => { if (foreground()) restaurar(); }, 60000);
     const sincronizar = (event) => {
-      if (event.type === 'storage' && event.key != null && !['lector.session.web', 'lector.session'].includes(event.key)) return;
-      revision.current += 1;
-      token_ref.current = null;
-      set_empleado(null);
-      if (busy.current) revalidar.current = true;
-      else restaurar();
+      if (event.type === 'storage') {
+        if (event.key != null && !['lector.session.web', 'lector.session'].includes(event.key)) return;
+        const hasta = plazo_actualizado(event);
+        if (hasta != null) {
+          if (token_ref.current) programar_expiracion(hasta);
+          return;
+        }
+      }
+      sincronizar_web();
+    };
+    const eventos_actividad = ['pointerdown', 'keydown', 'wheel', 'touchmove'];
+    const registrar_actividad = (event) => {
+      const token = token_ref.current;
+      if (!token || mantener_ref.current || !event.isTrusted || window.document.visibilityState === 'hidden') return;
+      try {
+        const hasta = renovar_actividad(token);
+        if (hasta == null) sincronizar_web();
+        else programar_expiracion(hasta);
+      } catch {
+        sincronizar_web();
+      }
     };
     if (es_web) {
       window.addEventListener('storage', sincronizar);
-      window.addEventListener('focus', sincronizar);
+      window.addEventListener('focus', restaurar);
+      for (const evento of eventos_actividad) window.addEventListener(evento, registrar_actividad, { capture: true, passive: true });
     }
     return () => {
       listener.remove(); clearInterval(timer); clearTimeout(expiracion_timer.current);
       if (es_web) {
         window.removeEventListener('storage', sincronizar);
-        window.removeEventListener('focus', sincronizar);
+        window.removeEventListener('focus', restaurar);
+        for (const evento of eventos_actividad) window.removeEventListener(evento, registrar_actividad, true);
       }
     };
   }, [restaurar]);
 
-  async function entrar(identificador, password, mantener = false) {
+  async function aplicar_entrada(session, mantener) {
+    const anterior = token_ref.current;
+    try { await guardar_token(session.token, mantener === true); }
+    catch {
+      await cerrar_sesion(session.token).catch(() => {});
+      throw new Error('No se pudo guardar tu sesión. Revisa los permisos de almacenamiento.');
+    }
+    enabled.current = false;
+    set_biometria(false);
+    mantener_ref.current = mantener === true;
+    set_persistente(mantener_ref.current);
+    await aceptar(session);
+    if (anterior && anterior !== session.token) cerrar_sesion(anterior).catch(() => {});
+  }
+
+  async function olvidar_credenciales() {
+    await borrar_credenciales_huella();
+    set_acceso_huella(false);
+  }
+
+  async function entrar(identificador, password, mantener = false, guardar_huella = false, confirmar_reemplazo) {
     if (busy.current) throw new Error('Espera un momento e inténtalo de nuevo.');
     busy.current = true;
     try {
       const session = await verificar_credenciales(identificador, password);
-      // Revoca la sesión anterior solo si ya estaba desbloqueada en memoria.
-      const anterior = token_ref.current;
-      try { await guardar_token(session.token, mantener === true); }
-      catch {
-        await cerrar_sesion(session.token).catch(() => {});
-        throw new Error('No se pudo guardar tu sesión. Revisa los permisos de almacenamiento.');
+      if (es_android && guardar_huella) {
+        try {
+          const cuenta = await leer_cuenta_huella();
+          const otra_cuenta = cuenta != null && cuenta !== session.empleado.id;
+          const guardar = !otra_cuenta || (await confirmar_reemplazo?.()) === true;
+          if (guardar) {
+            await guardar_credenciales_huella(session.empleado.id, identificador, password);
+            set_acceso_huella(true);
+          }
+        } catch {
+          await cerrar_sesion(session.token).catch(() => {});
+          throw new Error('No se pudieron guardar las credenciales con huella. Reintenta o desmarca esa opción para entrar con contraseña.');
+        }
       }
-      enabled.current = false;
-      set_biometria(false);
-      mantener_ref.current = mantener === true;
-      set_persistente(mantener_ref.current);
-      await aceptar(session);
-      if (anterior && anterior !== session.token) cerrar_sesion(anterior).catch(() => {});
+      await aplicar_entrada(session, mantener);
     } finally {
       busy.current = false;
       if (revalidar.current) { revalidar.current = false; queueMicrotask(restaurar); }
     }
+  }
+  async function entrar_con_huella(mantener = false) {
+    if (!es_android || busy.current) throw new Error('El acceso con huella no está disponible en este momento.');
+    busy.current = true;
+    try {
+      let credenciales;
+      try { credenciales = await leer_credenciales_huella(); }
+      catch { throw new Error('No se pudo confirmar la huella. Reintenta o entra con contraseña.'); }
+      if (!credenciales) {
+        await olvidar_credenciales();
+        throw new Error('Vuelve a guardar el acceso con huella al ingresar con contraseña.');
+      }
+      let session;
+      try { session = await verificar_credenciales(credenciales.identificador, credenciales.password); }
+      catch (error) {
+        if (error.status !== 401) throw error;
+        await olvidar_credenciales();
+        throw new Error('Las credenciales guardadas ya no son válidas. Ingresa con tu contraseña actual.');
+      }
+      if (session.empleado.id !== credenciales.id) {
+        await cerrar_sesion(session.token).catch(() => {});
+        await olvidar_credenciales();
+        throw new Error('La cuenta guardada cambió. Ingresa con tu contraseña.');
+      }
+      await aplicar_entrada(session, mantener);
+    } finally { busy.current = false; }
+  }
+
+  async function quitar_acceso_huella() {
+    if (!es_android || busy.current) throw new Error('Espera un momento e inténtalo de nuevo.');
+    busy.current = true;
+    try { await olvidar_credenciales(); }
+    finally { busy.current = false; }
   }
   async function desbloquear() {
     if (busy.current) throw new Error('Espera un momento e inténtalo de nuevo.');
@@ -211,9 +303,7 @@ function useSessionState() {
       if (es_web) {
         const actual = await leer_token();
         if (actual && actual !== token) {
-          token_ref.current = null;
-          set_empleado(null);
-          revalidar.current = true;
+          sincronizar_web();
           return;
         }
       }
@@ -225,5 +315,5 @@ function useSessionState() {
     }
   }
   const usar_password = () => set_session_error('');
-  return { empleado, checking, session_error, restaurar, entrar, salir, bloqueada, biometria, capacidad, desbloquear, cambiar_biometria, usar_password, persistente };
+  return { empleado, checking, session_error, restaurar, entrar, salir, bloqueada, biometria, capacidad, desbloquear, cambiar_biometria, usar_password, persistente, acceso_huella, entrar_con_huella, quitar_acceso_huella };
 }
