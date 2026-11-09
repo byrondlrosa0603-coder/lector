@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { verificar_credenciales, validar_sesion, cerrar_sesion } from './services/login';
+import { verificar_credenciales, validar_sesion, cerrar_sesion, solicitar_catalogo, solicitar_huellas } from './services/login';
 import { leer_token, leer_persistencia, leer_expiracion, renovar_actividad, plazo_actualizado, guardar_token, borrar_token, leer_biometria, capacidad_biometrica, activar_biometria, desactivar_biometria } from './services/session-storage';
 import { leer_cuenta_huella, leer_credenciales_huella, guardar_credenciales_huella, borrar_credenciales_huella } from './services/session-storage';
 
@@ -33,6 +33,18 @@ function useSessionState() {
   const es_web = Platform.OS === 'web';
   const es_android = Platform.OS === 'android';
   const foreground = () => AppState.currentState == null || AppState.currentState === 'active';
+
+  const gestionar_catalogo = useCallback(async (solicitud, signal) => {
+    const token = token_ref.current;
+    if (!token) throw new Error('Inicia sesión para consultar los catálogos.');
+    return solicitar_catalogo(solicitud, token, signal);
+  }, []);
+
+  const gestionar_huellas = useCallback(async (solicitud, signal) => {
+    const token = token_ref.current;
+    if (!token) throw new Error('Inicia sesión para registrar huellas.');
+    return solicitar_huellas(solicitud, token, signal);
+  }, []);
 
   function bloquear() {
     revision.current += 1;
@@ -315,5 +327,5 @@ function useSessionState() {
     }
   }
   const usar_password = () => set_session_error('');
-  return { empleado, checking, session_error, restaurar, entrar, salir, bloqueada, biometria, capacidad, desbloquear, cambiar_biometria, usar_password, persistente, acceso_huella, entrar_con_huella, quitar_acceso_huella };
+  return { empleado, checking, session_error, restaurar, entrar, salir, bloqueada, biometria, capacidad, desbloquear, cambiar_biometria, usar_password, persistente, acceso_huella, entrar_con_huella, quitar_acceso_huella, gestionar_catalogo, gestionar_huellas };
 }

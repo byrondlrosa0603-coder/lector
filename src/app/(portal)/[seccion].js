@@ -1,8 +1,9 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '../../use-session';
-import { modulos_edicion, nombre_rol, opciones_portal } from '../../config/portal';
+import { nombre_rol, opciones_portal } from '../../config/portal';
 import BiometricSettings from '../../components/BiometricSettings';
+import Catalogos from '../../components/Catalogos';
 
 export default function PortalScreen() {
   const { seccion } = useLocalSearchParams();
@@ -15,12 +16,15 @@ export default function PortalScreen() {
   const inicio = seccion === 'inicio';
   const editar = seccion === 'editar';
   const android = Platform.OS === 'android';
+  const subtitulo_editar = Platform.OS === 'web'
+    ? 'Administra el personal, las áreas y los horarios del centro de trabajo.'
+    : 'Módulos previstos para consultar y editar datos.';
   const nombre = `${empleado.nombre} ${empleado.apellido ?? ''}`.trim();
   const iniciales = `${empleado.nombre?.[0] ?? ''}${empleado.apellido?.[0] ?? ''}`.toUpperCase();
   return <View style={styles.page}>
     <Text style={styles.eyebrow}>{nombre_rol(empleado.rol).toUpperCase()} / {opcion.titulo.toUpperCase()}</Text>
     <Text accessibilityRole="header" style={styles.heading}>{inicio ? 'Tu espacio de trabajo' : opcion.titulo}</Text>
-    <Text style={styles.subtitle}>{inicio ? 'Tu acceso y tu asistencia, en un solo lugar.' : editar ? 'Módulos previstos para consultar y editar datos.' : 'Esta sección está lista para incorporar su contenido.'}</Text>
+    <Text style={styles.subtitle}>{inicio ? 'Tu acceso y tu asistencia, en un solo lugar.' : editar ? subtitulo_editar : 'Esta sección está lista para incorporar su contenido.'}</Text>
     {inicio ? <View style={[styles.welcome, android && styles.androidWelcome]}>
       <View style={[styles.welcomeTop, android && styles.androidWelcomeTop]}>
         <View style={[styles.avatar, android && styles.androidAvatar]}><Text style={styles.initials}>{iniciales}</Text></View>
@@ -34,15 +38,7 @@ export default function PortalScreen() {
         <View style={styles.detail}><Text style={styles.label}>ID DE EMPLEADO</Text><Text style={styles.value}>{empleado.id}</Text></View>
         <View style={styles.detail}><Text style={styles.label}>CORREO ELECTRÓNICO</Text><Text style={styles.value}>{empleado.correo || 'Sin correo registrado'}</Text></View>
       </View>
-    </View> : editar ? <View style={styles.editGrid}>
-      {modulos_edicion.map(modulo => (
-        <View key={modulo.titulo} style={styles.editCard}>
-          <View style={styles.editBadge}><Text style={styles.editBadgeText}>{modulo.sigla}</Text></View>
-          <Text accessibilityRole="header" style={styles.editTitle}>{modulo.titulo}</Text>
-          <Text style={styles.editDescription}>{modulo.descripcion}</Text>
-        </View>
-      ))}
-    </View> : <View style={styles.placeholder}>
+    </View> : editar ? <Catalogos key={empleado.id} /> : <View style={styles.placeholder}>
       <View style={styles.placeholderIcon}><Text style={styles.symbol}>{opcion.simbolo}</Text></View>
       <Text style={styles.emptyTitle}>{opcion.titulo}</Text>
       <Text style={styles.emptyText}>Próximamente encontrarás aquí las opciones de esta sección.</Text>
@@ -73,12 +69,6 @@ const styles = StyleSheet.create({
   detail: { minWidth: 140, flexShrink: 1 },
   label: { color: '#7c8ca4', fontSize: 9, fontWeight: '600', letterSpacing: 1.2, marginBottom: 9 },
   value: { color: '#33435c', fontSize: 14, lineHeight: 22 },
-  editGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
-  editCard: { flexGrow: 1, flexShrink: 1, flexBasis: 240, minWidth: 0, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e3eafa', borderRadius: 20, padding: 20 },
-  editBadge: { alignSelf: 'flex-start', minWidth: 40, padding: 10, borderRadius: 12, backgroundColor: '#edf4ff', alignItems: 'center' },
-  editBadgeText: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
-  editTitle: { fontSize: 18, fontWeight: '700', color: '#142745', marginTop: 14 },
-  editDescription: { fontSize: 13, lineHeight: 21, color: '#64748b', marginTop: 8 },
   placeholder: { alignItems: 'center', paddingHorizontal: 28, paddingVertical: 64, backgroundColor: '#fff', borderRadius: 24, borderWidth: 1, borderColor: '#e3eafa' },
   placeholderIcon: { height: 60, width: 60, backgroundColor: '#edf4ff', borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
   symbol: { fontSize: 28, color: '#2563eb' },
